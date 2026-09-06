@@ -65,8 +65,21 @@ export async function POST(request: NextRequest) {
     const githubResponse = await dispatchToGitHub(subscriptionPayload);
 
     if (!githubResponse.ok) {
-      console.error('GitHub dispatch failed:', await githubResponse.text());
-      return NextResponse.json({ error: 'Failed to save subscription' }, { status: 500 });
+      const errorDetail = await githubResponse.text();
+      console.error('GitHub dispatch failed:', {
+        status: githubResponse.status,
+        statusText: githubResponse.statusText,
+        repository: getGithubRepository(),
+        detail: errorDetail
+      });
+
+      return NextResponse.json(
+        {
+          error: 'GitHub dispatch failed',
+          githubStatus: githubResponse.status
+        },
+        { status: 502 }
+      );
     }
 
     return NextResponse.json(
@@ -83,12 +96,18 @@ export async function POST(request: NextRequest) {
   }
 }
 
+function getGithubRepository() {
+  return process.env.GITHUB_REPOSITORY || 'FOSSUChennai/Communities';
+}
+
 /**
  * Dispatches subscription data to GitHub Actions workflow
  */
 async function dispatchToGitHub(subscriptionData: SubscriptionPayload) {
-  const githubToken = process.env.GITHUB_TOKEN;
-  const githubRepo = process.env.GITHUB_REPOSITORY || 'FOSSUChennai/Communities';
+  // GH_PAT is supported for deployments that use the same naming convention
+  // as the GitHub Actions workflows; GITHUB_TOKEN remains the preferred name.
+  const githubToken = process.env.GITHUB_TOKEN || process.env.GH_PAT;
+  const githubRepo = getGithubRepository();
 
   if (!githubToken) {
     throw new Error('GitHub token not configured');
@@ -96,15 +115,20 @@ async function dispatchToGitHub(subscriptionData: SubscriptionPayload) {
 
   const [owner, repo] = githubRepo.split('/');
 
+  if (!owner || !repo || githubRepo.split('/').length !== 2) {
+    throw new Error(`Invalid GITHUB_REPOSITORY value: ${githubRepo}`);
+  }
+
   const dispatchUrl = `https://api.github.com/repos/${owner}/${repo}/dispatches`;
 
   return fetch(dispatchUrl, {
     method: 'POST',
     headers: {
-      Accept: 'application/vnd.github.v3+json',
+      Accept: 'application/vnd.github+json',
       Authorization: `Bearer ${githubToken}`,
       'Content-Type': 'application/json',
-      'User-Agent': 'TamilNadu-Tech-Notifications/1.0'
+      'User-Agent': 'TamilNadu-Tech-Notifications/1.0',
+      'X-GitHub-Api-Version': '2026-03-10'
     },
     body: JSON.stringify({
       event_type: 'save_push_subscription',
